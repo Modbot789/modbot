@@ -1,0 +1,16 @@
+# Python cache ဖိုင်များ (ဒါတွေက GitHub ပေါ်တင်စရာမလိုပါ)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment (အကယ်၍ သုံးထားခဲ့ရင်)
+venv/
+env/
+
+# OS နဲ့ဆိုင်သော ဖိုင်များ
+.DS_Store
+Thumbs.db
+
+# Log ဖိုင်များ
+*.log
