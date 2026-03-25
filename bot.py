@@ -4,18 +4,22 @@ import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# --- ဒီနေရာမှာ သင့် Bot Token ကို အပြီးထည့်ပါ ---
+# --- သင့် Bot Token ကို အပြီးထည့်သွင်းထားပါသည် ---
 TOKEN = "7773500418:AAFDWQmyY2bUDHMhM7-okO1H5xlFHaSObIo"
 
-# ရိုင်းတဲ့ စကားလုံးများ စာရင်း
+# ရိုင်းစိုင်းသော စကားလုံးများ စာရင်း
 BAD_WORDS = ["လီး", "မအေလိုး", "သခိုး", "မအေလိုးမ", "ဖူးထုပ်"]
 
+# Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- Welcome Function ---
+# --- Welcome Function (လူသစ်ဝင်လာလျှင် ကြိုဆိုရန်) ---
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.new_chat_members:
+        return
+        
     for new_user in update.message.new_chat_members:
         if new_user.id == context.bot.id:
             continue
@@ -41,50 +45,61 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(text=welcome_text, parse_mode=ParseMode.MARKDOWN)
 
-# --- Moderation Function (Auto Delete & Warn) ---
+# --- Moderation Function (စာဖျက်ခြင်းနှင့် သတိပေးခြင်း) ---
 async def delete_and_warn(update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str):
     user = update.message.from_user
     chat_id = update.effective_chat.id
     message_id = update.message.message_id
 
     try:
+        # မူရင်းစာကို ဖျက်မည်
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        
+        # သတိပေးစာ ပို့မည်
         warn_msg = await context.bot.send_message(
             chat_id=chat_id, 
             text=f"⚠️ {user.first_name}၊ {reason} ကြောင့် စာကို ဖျက်လိုက်ပါတယ်။"
         )
-        # ၅ စက္ကန့်ကြာရင် သတိပေးစာကို ပြန်ဖျက်မယ်
+        
+        # ၅ စက္ကန့်ကြာလျှင် သတိပေးစာကို ပြန်ဖျက်မည်
         await asyncio.sleep(5)
         await context.bot.delete_message(chat_id=chat_id, message_id=warn_msg.message_id)
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(f"Error handling moderation: {e}")
 
+# --- Message Filter Function (စစ်ဆေးခြင်း) ---
 async def moderate_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
-    text = update.message.text or ""
+    if not update.message: 
+        return
+        
+    text = update.message.text or update.message.caption or ""
     
-    # 1. Link & @ Check
+    # ၁။ Link & @ Username စစ်ဆေးခြင်း
     if re.search(r'http[s]?://|www\.|t\.me/', text) or "@" in text:
-        await delete_and_warn(update, context, "Link/Username ပို့ခွင့်မရှိပါ")
+        await delete_and_warn(update, context, "Link သို့မဟုတ် Username ပို့ခွင့်မရှိပါ")
         return
 
-    # 2. Bad Words Check
+    # ၂။ ရိုင်းစိုင်းသော စကားလုံး စစ်ဆေးခြင်း
     if any(word in text for word in BAD_WORDS):
         await delete_and_warn(update, context, "ရိုင်းစိုင်းသော စကားလုံး သုံးခွင့်မရှိပါ")
         return
 
-    # 3. Emoji/Sticker/Animation Check
-    if update.message.sticker or update.message.animation or (text and not re.search(r'[a-zA-Z0-9\u1000-\u109f]', text)):
-        await delete_and_warn(update, context, "Emoji/Sticker သီးသန့် ပို့ခွင့်မရှိပါ")
+    # ၃။ Sticker နှင့် GIF/Animation စစ်ဆေးခြင်း
+    if update.message.sticker or update.message.animation:
+        await delete_and_warn(update, context, "Sticker သို့မဟုတ် GIF ပို့ခွင့်မရှိပါ")
+        return
 
 def main():
-    # Application building with hardcoded Token
+    # Application building
     app = Application.builder().token(TOKEN).build()
 
+    # Welcome message handler
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
-    app.add_handler(MessageHandler(filters.TEXT | filters.Sticker | filters.ANIMATION, moderate_messages))
+    
+    # Moderation handler (စာသား၊ စတစ်ကာ အကုန်စစ်မည်)
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND) & (~filters.StatusUpdate.ALL), moderate_messages))
 
-    print("Bot is running with hardcoded Token...")
+    print("Bot is starting with the provided Token...")
     app.run_polling()
 
 if __name__ == "__main__":
