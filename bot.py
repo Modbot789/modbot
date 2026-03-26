@@ -4,102 +4,110 @@ import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
-# --- သင့် Bot Token ကို အပြီးထည့်သွင်းထားပါသည် ---
+# --- Bot Token ---
 TOKEN = "7773500418:AAFDWQmyY2bUDHMhM7-okO1H5xlFHaSObIo"
 
-# ရိုင်းစိုင်းသော စကားလုံးများ စာရင်း
+# ရိုင်းစိုင်းသော စကားလုံးများ
 BAD_WORDS = ["လီး", "မအေလိုး", "သခိုး", "မအေလိုးမ", "ဖူးထုပ်"]
 
-# Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- Welcome Function (လူသစ်ဝင်လာလျှင် ကြိုဆိုရန်) ---
+# --- Admin Check Function ---
+async def is_admin(update: Update):
+    user_id = update.effective_user.id
+    chat_member = await update.effective_chat.get_member(user_id)
+    return chat_member.status in ['administrator', 'creator']
+
+# --- Welcome Function ---
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members:
         return
-        
     for new_user in update.message.new_chat_members:
-        if new_user.id == context.bot.id:
-            continue
-
-        user_name = new_user.first_name
-        user_id = new_user.id
-        group_name = update.message.chat.title
-        
-        # မြန်မာစံတော်ချိန် (UTC + 6:30)
+        if new_user.id == context.bot.id: continue
         now = datetime.utcnow() + timedelta(hours=6, minutes=30)
-        join_date = now.strftime("%d/%m/%Y")
-        join_time = now.strftime("%I:%M %p")
-
         welcome_text = (
-            f"🎊 *မင်္ဂလာပါ {user_name}*\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🆔 *User ID:* `{user_id}`\n"
-            f"📅 *Join Date:* {join_date}\n"
-            f"⏰ *Join Time:* {join_time}\n"
-            f"📍 *Group:* {group_name}\n"
+            f"🎊 *မင်္ဂလာပါ {new_user.first_name}*\n"
+            f"🆔 *User ID:* `{new_user.id}`\n"
+            f"📅 *Date:* {now.strftime('%d/%m/%Y')}\n"
+            f"📍 *Group:* {update.message.chat.title}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"Group မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။"
         )
         await update.message.reply_text(text=welcome_text, parse_mode=ParseMode.MARKDOWN)
 
-# --- Moderation Function (စာဖျက်ခြင်းနှင့် သတိပေးခြင်း) ---
-async def delete_and_warn(update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str):
-    user = update.message.from_user
-    chat_id = update.effective_chat.id
-    message_id = update.message.message_id
+# --- Admin Commands ---
 
-    try:
-        # မူရင်းစာကို ဖျက်မည်
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-        
-        # သတိပေးစာ ပို့မည်
-        warn_msg = await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"⚠️ {user.first_name}၊ {reason} ကြောင့် စာကို ဖျက်လိုက်ပါတယ်။"
-        )
-        
-        # ၅ စက္ကန့်ကြာလျှင် သတိပေးစာကို ပြန်ဖျက်မည်
-        await asyncio.sleep(5)
-        await context.bot.delete_message(chat_id=chat_id, message_id=warn_msg.message_id)
-    except Exception as e:
-        logging.error(f"Error handling moderation: {e}")
-
-# --- Message Filter Function (စစ်ဆေးခြင်း) ---
-async def moderate_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: 
+# 1. Ban User (/ban)
+async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update): return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ User ကို Reply ပြန်ပြီး /ban လို့ ရိုက်ပါ။")
         return
-        
+    
+    target_user = update.message.reply_to_message.from_user
+    await context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=target_user.id)
+    await update.message.reply_text(f"🚫 {target_user.first_name} ကို Group ထဲက အပြီးထုတ်လိုက်ပါပြီ။")
+
+# 2. Mute User (/mute)
+async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update): return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ User ကို Reply ပြန်ပြီး /mute လို့ ရိုက်ပါ။")
+        return
+
+    target_user = update.message.reply_to_message.from_user
+    # 24 နာရီ စကားပြောပိတ်ထားမည်
+    until_date = datetime.utcnow() + timedelta(hours=24)
+    from telegram import ChatPermissions
+    permissions = ChatPermissions(can_send_messages=False)
+    
+    await context.bot.restrict_chat_member(chat_id=update.effective_chat.id, user_id=target_user.id, permissions=permissions, until_date=until_date)
+    await update.message.reply_text(f"🔇 {target_user.first_name} ကို ၂၄ နာရီ စကားပြောပိတ်လိုက်ပါပြီ။")
+
+# 3. Unmute User (/unmute)
+async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update): return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ User ကို Reply ပြန်ပြီး /unmute လို့ ရိုက်ပါ။")
+        return
+
+    target_user = update.message.reply_to_message.from_user
+    from telegram import ChatPermissions
+    permissions = ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_polls=True, can_send_other_messages=True, can_add_web_page_previews=True)
+    
+    await context.bot.restrict_chat_member(chat_id=update.effective_chat.id, user_id=target_user.id, permissions=permissions)
+    await update.message.reply_text(f"🔊 {target_user.first_name} အခု စကားပြန်ပြောလို့ ရပါပြီ။")
+
+# --- Moderation Function ---
+async def moderate_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or await is_admin(update): return
     text = update.message.text or update.message.caption or ""
     
-    # ၁။ Link & @ Username စစ်ဆေးခြင်း
-    if re.search(r'http[s]?://|www\.|t\.me/', text) or "@" in text:
-        await delete_and_warn(update, context, "Link သို့မဟုတ် Username ပို့ခွင့်မရှိပါ")
-        return
-
-    # ၂။ ရိုင်းစိုင်းသော စကားလုံး စစ်ဆေးခြင်း
-    if any(word in text for word in BAD_WORDS):
-        await delete_and_warn(update, context, "ရိုင်းစိုင်းသော စကားလုံး သုံးခွင့်မရှိပါ")
-        return
-
-    # ၃။ Sticker နှင့် GIF/Animation စစ်ဆေးခြင်း
-    if update.message.sticker or update.message.animation:
-        await delete_and_warn(update, context, "Sticker သို့မဟုတ် GIF ပို့ခွင့်မရှိပါ")
-        return
+    # Check for Links, Bad Words, and Stickers
+    if re.search(r'http[s]?://|www\.|t\.me/', text) or "@" in text or \
+       any(word in text for word in BAD_WORDS) or \
+       update.message.sticker or update.message.animation:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except: pass
 
 def main():
-    # Application building
     app = Application.builder().token(TOKEN).build()
 
-    # Welcome message handler
+    # Welcome & Moderation
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
     
-    # Moderation handler (စာသား၊ စတစ်ကာ အကုန်စစ်မည်)
+    # Admin Commands
+    app.add_handler(CommandHandler("ban", ban_user))
+    app.add_handler(CommandHandler("mute", mute_user))
+    app.add_handler(CommandHandler("unmute", unmute_user))
+
+    # All messages moderation
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND) & (~filters.StatusUpdate.ALL), moderate_messages))
 
-    print("Bot is starting with the provided Token...")
+    print("Bot with Admin Commands is starting...")
     app.run_polling()
 
 if __name__ == "__main__":
